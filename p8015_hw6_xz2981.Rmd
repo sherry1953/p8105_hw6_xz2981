@@ -1,0 +1,206 @@
+---
+title: "p8015_hw6_xz2981"
+author: "Xinyan Zhou"
+date: "12/1/2021"
+output: github_document
+---
+
+```{r}
+library(tidyverse)
+library(rvest)
+library(modelr)
+
+knitr::opts_chunk$set(
+  fig.width = 6,
+  fig.asp = .6,
+  out.width = "90%"
+)
+
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis"
+)
+
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+```
+
+
+## Problem 1
+
+### Tidy data
+Load and clean the data for regression analysis (i.e. convert numeric to factor where appropriate, check for missing data, etc.).
+
+```{r}
+birthweight = 
+  read_csv("data/birthweight.csv") %>% 
+  mutate(
+    babysex = case_when(
+      babysex  == 1 ~ "male",
+      babysex  == 2 ~ "female",
+      TRUE ~ "missing"),
+    frace = case_when(
+      frace == 1 ~ "White",
+      frace == 2 ~ "Black",
+      frace == 3 ~ "Asian",
+      frace == 4 ~ "Puerto Rican",
+      frace == 8 ~ "Other",
+      frace == 9 ~ "Unknown",
+      TRUE ~ "missing"),
+     malform = case_when(
+      malform == 0 ~ "absent",
+      malform == 1 ~ "present",
+      TRUE ~ "missing"),
+     mrace = case_when(
+      mrace == 1 ~ "White",
+      mrace == 2 ~ "Black",
+      mrace == 3 ~ "Asian",
+      mrace == 4 ~ "Puerto Rican",
+      TRUE ~ "missing")
+    ) %>%
+  mutate(babysex = factor(babysex),
+         frace = factor(frace),
+         malform = factor(malform),
+         mrace = factor(mrace))
+
+summary(birthweight)
+```
+
+From the results of summary, we know that there are no missing data.
+
+### Model fit
+
+Propose a regression model for birthweight. 
+
+This model is based on a hypothesized structure for the factors that underlie birth weight. Based on my work experience in the Department of Obstetrics and Gynecology, I chose to include the following variables into my model: babysex, gaweeks, and wtgain.
+
+Fit the model
+```{r}
+fit <- lm(bwt ~ babysex + gaweeks +  wtgain, data = birthweight)
+
+fit %>% broom::tidy()
+```
+
+Diagnostics
+```{r}
+birthweight %>%
+  modelr::add_residuals(fit) %>% 
+  modelr::add_predictions(fit) %>% 
+  ggplot(aes(x = resid, y = pred)) +
+  geom_point()
+```
+
+### Compare models
+
+Model 1
+```{r}
+fit_model_1 <- lm(bwt ~ blength + gaweeks, data = birthweight)
+
+fit_model_1 %>% broom::tidy()
+```
+
+Model 2
+```{r}
+fit_model_2 <- lm(bwt ~ blength + gaweeks + babysex * bhead * blength, 
+                  data = birthweight)
+
+fit_model_2 %>% broom::tidy()
+```
+
+```{r}
+cv_df = 
+  crossv_mc(birthweight, 100) %>% 
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble)
+  )
+
+cv_df =
+  cv_df %>% 
+  mutate(
+    model_0 = map(.x = train, ~lm(bwt ~ babysex + gaweeks +  wtgain, data = .x)),
+    model_1 = map(.x = train, ~lm(bwt ~ blength + gaweeks, data = .x)),
+    model_2 = map(.x = train, ~lm(bwt ~ blength + gaweeks + babysex * bhead * blength,
+                                  data = .x)), 
+  ) %>% 
+  mutate(
+    rmse_model_0 = map2_dbl(.x = model_0, .y = test, ~rmse(model = .x, data = .y)),
+    rmse_model_1 = map2_dbl(.x = model_1, .y = test, ~rmse(model = .x, data = .y)),
+    rmse_model_2 = map2_dbl(.x = model_2, .y = test, ~rmse(model = .x, data = .y)),
+  )
+
+cv_df %>% 
+  select(.id, starts_with("rmse")) %>% 
+  pivot_longer(
+    rmse_model_0:rmse_model_2,
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_"
+  ) %>% 
+  ggplot(aes(x = model, y = rmse)) + 
+  geom_boxplot()
+```
+
+## Problem 2
+
+```{r}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2017-01-01",
+    date_max = "2017-12-31") %>%
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) %>%
+  select(name, id, everything())
+```
+
+```{r}
+boot_strap_df =
+  weather_df %>% 
+  bootstrap(n = 5000, id = "strap_number") %>% 
+  mutate(
+    models = map(.x = strap, ~lm(tmax ~ tmin, data = .x)),
+    results_1 = map(models, broom::glance),
+    results_2 = map(models, broom::tidy)
+  ) %>%
+  select(-strap, -models) 
+```
+
+```{r}
+value_1_df <-
+  boot_strap_df %>%
+  unnest(results_1) %>%
+  select(strap_number,r.squared)
+
+mean(pull(value_1_df,r.squared))
+quantile(pull(value_1_df,r.squared), probs = c(0.025, 0.975))  
+  
+value_1_df %>%
+  ggplot(aes(x = r.squared)) +
+  geom_density() +
+  xlim(0.8,1)
+```
+
+```{r}
+value_2_df <-
+  boot_strap_df %>%
+  unnest(results_2) %>%
+  select(strap_number, term, estimate) %>%
+  pivot_wider(names_from = term, values_from = estimate) %>%
+  janitor::clean_names() %>%
+  mutate(value_2 = log(intercept*tmin)) 
+
+mean(pull(value_2_df,value_2))
+quantile(pull(value_2_df,value_2), probs = c(0.025, 0.975))  
+  
+value_2_df %>%
+  ggplot(aes(x = value_2)) +
+  geom_density() +
+  xlim(1.8,2.2)
+```
+
