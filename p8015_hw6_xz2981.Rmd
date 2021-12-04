@@ -1,5 +1,5 @@
 ---
-title: "p8015_hw6_xz2981"
+title: "p8105_hw6_xz2981"
 author: "Xinyan Zhou"
 date: "12/1/2021"
 output: github_document
@@ -7,7 +7,6 @@ output: github_document
 
 ```{r}
 library(tidyverse)
-library(rvest)
 library(modelr)
 
 knitr::opts_chunk$set(
@@ -36,6 +35,7 @@ Load and clean the data for regression analysis (i.e. convert numeric to factor 
 ```{r}
 birthweight = 
   read_csv("data/birthweight.csv") %>% 
+  janitor::clean_names() %>%
   mutate(
     babysex = case_when(
       babysex  == 1 ~ "male",
@@ -74,40 +74,58 @@ From the results of summary, we know that there are no missing data.
 
 Propose a regression model for birthweight. 
 
-This model is based on a hypothesized structure for the factors that underlie birth weight. Based on my work experience in the Department of Obstetrics and Gynecology, I chose to include the following variables into my model: babysex, gaweeks, and wtgain.
+This model is based on a hypothesized structure for the factors that underlie birth weight. I would like to propose a model that could predict the birth weight before birth. Thus, I decide not to include variables like bhead and blength in my model. Based on this limitation and my work experience in the Department of Obstetrics and Gynecology, I chose to include the following variables into my model: babysex, fincome, frace, gaweeks, mrace, ppwt, smoken and wtgain.
 
 Fit the model
+
 ```{r}
-fit <- lm(bwt ~ babysex + gaweeks +  wtgain, data = birthweight)
+fit <- lm(bwt ~ babysex + fincome + frace + gaweeks + mrace + ppwt + smoken + wtgain,
+          data = birthweight)
 
 fit %>% broom::tidy()
 ```
 
+The results show that all the included variables are significant predictors of 
+birthweight.
+
 Diagnostics
+
 ```{r}
 birthweight %>%
   modelr::add_residuals(fit) %>% 
   modelr::add_predictions(fit) %>% 
-  ggplot(aes(x = resid, y = pred)) +
+  ggplot(aes(x = pred, y = resid)) +
   geom_point()
 ```
 
+From the plot of model residuals against fitted values, we can see that there is no 
+pattern, which means that our model is appropriate.
+
 ### Compare models
 
-Model 1
+Model 1:
+One using length at birth and gestational age as predictors (main effects only)
+
 ```{r}
 fit_model_1 <- lm(bwt ~ blength + gaweeks, data = birthweight)
 
 fit_model_1 %>% broom::tidy()
 ```
 
-Model 2
+Model 2:
+One using head circumference, length, sex, and all interactions (including the three-way interaction) between these
+(Since length at birth and gestational age are main effects, we also include
+gestational age in our model.)
+
 ```{r}
 fit_model_2 <- lm(bwt ~ blength + gaweeks + babysex * bhead * blength, 
                   data = birthweight)
 
 fit_model_2 %>% broom::tidy()
 ```
+
+
+Make this comparison in terms of the cross-validated prediction error; use crossv_mc and functions in purrr as appropriate.
 
 ```{r}
 cv_df = 
@@ -120,7 +138,8 @@ cv_df =
 cv_df =
   cv_df %>% 
   mutate(
-    model_0 = map(.x = train, ~lm(bwt ~ babysex + gaweeks +  wtgain, data = .x)),
+    model_0 = map(.x = train, ~lm(bwt ~ babysex + fincome + frace + gaweeks + mrace +
+                                    ppwt + smoken + wtgain, data = .x)),
     model_1 = map(.x = train, ~lm(bwt ~ blength + gaweeks, data = .x)),
     model_2 = map(.x = train, ~lm(bwt ~ blength + gaweeks + babysex * bhead * blength,
                                   data = .x)), 
@@ -140,10 +159,17 @@ cv_df %>%
     names_prefix = "rmse_"
   ) %>% 
   ggplot(aes(x = model, y = rmse)) + 
-  geom_boxplot()
+  geom_boxplot() +
+  labs(
+    title = "Comparing the cross-validated prediction error"
+  )
 ```
 
+Based on the above figure, we can know that Model 2 is better. 
+
 ## Problem 2
+
+Input the data
 
 ```{r}
 weather_df = 
@@ -159,6 +185,8 @@ weather_df =
   select(name, id, everything())
 ```
 
+Use 5000 bootstrap samples and, for each bootstrap sample, produce estimates of these two quantities. Plot the distribution of your estimates, and describe these in words. Using the 5000 bootstrap estimates, identify the 2.5% and 97.5% quantiles to provide a 95% confidence interval for r^2 and log(β_0∗β_1).
+
 ```{r}
 boot_strap_df =
   weather_df %>% 
@@ -171,20 +199,32 @@ boot_strap_df =
   select(-strap, -models) 
 ```
 
+### Estimation of r^2
+
 ```{r}
 value_1_df <-
   boot_strap_df %>%
   unnest(results_1) %>%
   select(strap_number,r.squared)
 
-mean(pull(value_1_df,r.squared))
-quantile(pull(value_1_df,r.squared), probs = c(0.025, 0.975))  
+mean_value_1 <- mean(pull(value_1_df,r.squared))
+CI_value_1 <- quantile(pull(value_1_df,r.squared), probs = c(0.025, 0.975))  
   
 value_1_df %>%
   ggplot(aes(x = r.squared)) +
-  geom_density() +
-  xlim(0.8,1)
+  geom_density() + 
+  labs(
+    title = "The distribution of r^2"
+  )
 ```
+
+The mean value of r^2 is `r mean_value_1`. 
+The 95% confidence interval is (`r CI_value_1`).
+
+The distribution of r^2 is unimodal and approximately symmetric, but slightly left-skewed.
+
+
+### Estimation of log(β_0∗β_1)
 
 ```{r}
 value_2_df <-
@@ -195,12 +235,18 @@ value_2_df <-
   janitor::clean_names() %>%
   mutate(value_2 = log(intercept*tmin)) 
 
-mean(pull(value_2_df,value_2))
-quantile(pull(value_2_df,value_2), probs = c(0.025, 0.975))  
+mean_value_2 <- mean(pull(value_2_df,value_2))
+CI_value_2 <- quantile(pull(value_2_df,value_2), probs = c(0.025, 0.975))  
   
 value_2_df %>%
   ggplot(aes(x = value_2)) +
   geom_density() +
-  xlim(1.8,2.2)
+  labs(
+    title = "The distribution of log(β_0∗β_1)"
+  )
 ```
 
+The mean value of is `r mean_value_2`. 
+The 95% confidence interval is (`r CI_value_2`).
+
+The distribution of log(β_0∗β_1) is unimodal and approximately symmetric.
